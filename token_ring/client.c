@@ -8,29 +8,47 @@ int MULTICAST_PORT = 9010;
 Token global_token;
 
 void signal_exit(int signo) {
+  printf("Disconnecting\n");
   if (strcmp(PROTOCOL, "tcp") == 0) {
-
+    if (HAS_TOKEN == 1) {
+      tcp_send_token(global_token);
+      printf("Sent DATA token\n");
+    }
+    tcp_send_disconnect_token();
+    printf("Sent DISCONNECT token\n");
   } else { //"udp"
     udp_send_disconnect_token();
+    printf("Sent DISCONNECT token\n");
     if (HAS_TOKEN == 1) {
       udp_send_token(global_token);
+      printf("Sent DATA token\n");
     }
   }
-  close(IN_SOCKET);
-  close(OUT_SOCKET);
-  close(MULTICAST_SOCKET);
+  shutdown(IN_SOCKET, SHUT_RDWR);
+  shutdown(OUT_SOCKET, SHUT_RDWR);
+  shutdown(MULTICAST_SOCKET, SHUT_RDWR);
   exit(0);
 }
 
 void atexit_exit() {
-  if (strcmp(PROTOCOL, "tcp")) {
-
+  if (strcmp(PROTOCOL, "tcp") == 0) {
+    if (HAS_TOKEN == 1) {
+      tcp_send_token(global_token);
+      printf("Sent DATA token\n");
+    }
+    tcp_send_disconnect_token();
+    printf("Sent DISCONNECT token\n");
   } else { //"udp"
     udp_send_disconnect_token();
+    printf("Sent DISCONNECT token\n");
+    if (HAS_TOKEN == 1) {
+      udp_send_token(global_token);
+      printf("Sent DATA token\n");
+    }
   }
-  close(IN_SOCKET);
-  close(OUT_SOCKET);
-  close(MULTICAST_SOCKET);
+  shutdown(IN_SOCKET, SHUT_RDWR);
+  shutdown(OUT_SOCKET, SHUT_RDWR);
+  shutdown(MULTICAST_SOCKET, SHUT_RDWR);
 }
 
 void init_multicast() {
@@ -96,7 +114,29 @@ int main(int argc, char **argv) {
 
   // initial
   if (strcmp(PROTOCOL, "tcp") == 0) {
+    if (HAS_TOKEN == 1) {
+      tcp_init_input_socket();
+      tcp_init_output_socket();
 
+      tcp_accept();
+
+      Token token;
+
+      read(TCP_IN_SOCKET, &token, sizeof(token));
+      NEXT_PORT = token.port;
+
+      token.msg_type = DATA;
+      token.value = rand() % 100;
+      token.taken = rand() % 3 + 3;
+
+      tcp_send_token(token);
+
+      HAS_TOKEN = 0;
+    } else {
+      tcp_init_input_socket();
+      tcp_send_init_token();
+      printf("Sent INIT token\n");
+    }
   } else { //"udp"
     udp_init_input_socket();
     udp_init_output_socket();
@@ -115,6 +155,8 @@ int main(int argc, char **argv) {
 
       udp_send_token(token);
 
+      HAS_TOKEN = 0;
+
       printf("Since I HAS_TOKEN, sent token\n");
     }
   }
@@ -122,12 +164,56 @@ int main(int argc, char **argv) {
   // network
   if (strcmp(PROTOCOL, "tcp") == 0) {
     while (1) {
+      Token token;
 
+      tcp_accept();
+
+      read(TCP_IN_SOCKET, &token, sizeof(token));
+
+      switch (token.msg_type) {
+        case INIT:
+          printf("Got INIT token\n");
+          if (NEXT_PORT == token.next_port) {
+            printf("Remapped\n");
+            NEXT_PORT = token.port;
+          } else {
+            printf("Not my business\n");
+            tcp_send_token(token);
+          }
+          break;
+        case DATA:
+          send_multicast(ID, strlen(ID) * sizeof(char));
+          printf("Got DATA token\n");
+          if (token.taken == 0) {
+            token.value = rand() % 100;
+            token.taken = rand() % 3 + 3;
+          } else {
+            token.taken = token.taken - 1;
+          }
+
+          HAS_TOKEN = 1;
+          global_token = token;
+
+          usleep(250000);
+
+          tcp_send_token(token);
+          HAS_TOKEN = 0;
+          break;
+        case DISCONNECT:
+          printf("Got DISCONNECT token\n");
+          if (NEXT_PORT == token.port) {
+            printf("Remapped\n");
+            NEXT_PORT = token.next_port;
+          } else {
+            printf("Not my business\n");
+            tcp_send_token(token);
+          }
+          break;
+      }
     }
   } else { //"udp"
     while (1) {
       Token token;
-      struct sockaddr_in addr;
 
       recvfrom(IN_SOCKET, &token, sizeof(token), 0, NULL, NULL);
 
@@ -162,7 +248,7 @@ int main(int argc, char **argv) {
           break;
         case DISCONNECT:
           printf("Got DISCONNECT token\n");
-          if (NEXT_PORT = token.port) {
+          if (NEXT_PORT == token.port) {
             printf("Remapped\n");
             NEXT_PORT = token.next_port;
             udp_init_output_socket();

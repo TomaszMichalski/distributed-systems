@@ -18,6 +18,7 @@ int MULTICAST_PORT;
 int IN_SOCKET;
 int OUT_SOCKET;
 int MULTICAST_SOCKET;
+int TCP_IN_SOCKET;
 
 char *ID;
 int PORT;
